@@ -31,8 +31,8 @@ static void test_single_base() {
     assert(matches(c, Cat));
 
     int v = match(c, {
-        of(Cat, lives)   { return lives; }
-        of(Dog, tricks)  { return tricks; }
+        of(Cat, lives)  return lives;
+        of(Dog, tricks) return tricks;
     });
     assert(v == 9);
 }

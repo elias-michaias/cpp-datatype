@@ -76,6 +76,7 @@ Declares a tagged union. Each variant is a parenthesised tuple:
 
 Generates:
 - `Name::VariantName(args…)` — static constructor
+- `VariantName(args…)` — type-inferring proxy constructor
 - `Name::Tag` enum with `VariantName_tag` members
 - `Name::_variant_count` — number of variants (constexpr)
 - Inner `struct _VariantName { T0 _0; T1 _1; … }` for layout
@@ -103,6 +104,30 @@ datatype(Either,
     (Left,  L),
     (Right, R)
 );
+```
+
+### Proxy types and free constructors
+
+You can construct variants either with fully-qualified constructors or free constructors. Free constructors are able to omit type information by generating a proxy type that implicitly converts only to a fully-typed version of its own datatype. The proxy type becomes fully-typed from the surrounding context. This is useful in certain situations, like function returns:
+
+```
+template<typename T>
+datatype(Maybe,
+    (Just, T),
+    (Nothing),
+);
+
+auto m1 = Maybe<int>::Just(12); // fully qualified constructor
+Maybe<int> m2 = Just(12); // proxy type from free constructor
+
+auto div(int x, int y) -> Maybe<int> {
+    if (y == 0) return Nothing();
+    return Just(x / y);
+};
+
+// inferred types:
+// Nothing() -> Maybe<int>::Nothing();
+// Just(x / y) -> Maybe<int>::Just(x / y);
 ```
 
 ### Inheritance
@@ -182,16 +207,14 @@ if_let(shape, Circle, r) {
 ### `Option<T>`
 
 ```cpp
-Option<int> s = Some(42);   // T deduced from arg
-Option<int> n = None();     // T deduced from context
+Option<int> s = Some(42);
+Option<int> n = None();
 
-// Pattern matching works identically to user-defined data types
 match(opt, {
     of(Some, v) { return v * 2; }
     of(None)    { return -1;    }
 });
 
-// Functional helpers
 opt.map([](int v)      { return v + 1; });          // Option<int>
 opt.and_then([](int v) { return Some(v * 2); });
 opt.or_else([]         { return Some(0); });
