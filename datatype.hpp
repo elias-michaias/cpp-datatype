@@ -185,23 +185,14 @@
 
 // ── Free constructor proxies ─────────────────────────────────────────────────
 //
-// For every variant, the macro emits a proxy struct + free function OUTSIDE the
-// struct body.  The proxy's operator _R() calls _R::VN(args...) for whatever
-// target type _R the compiler resolves from context, filling in any type params
-// that the variant's fields alone cannot deduce.  This mirrors how Ok/Err/Some/None
-// work for Result/Option:
+// For every variant the macro emits a proxy struct + free function outside the
+// struct body.  DTProxyVN<Args…>::operator _R() calls _R::VN(args…) for whatever
+// target type _R the compiler resolves from context (variable type, return type,
+// etc.), filling in any type params the variant's fields alone cannot deduce.
 //
-//   Shape s   = Circle(5);              // _R = Shape,       E not applicable
-//   Box<int> b = Some(42);              // _R = Box<int>,    T deduced from 42
-//   Result<int,string> r = Ok(42);      // _R = Result<i,s>, E filled from r's type
-//   Box<int> empty = None();            // _R = Box<int>,    T filled from empty
-//
-// Because the proxy defers type resolution to the assignment site, the same free
-// function works for both concrete and template datatypes.
-//
-// Name-collision note: two datatypes with the same variant name AND arity in the
-// same TU will produce a redefinition of DTProxyVN — use the qualified
-// DT::VN() form in that case.  The library's own Some/None/Ok/Err are reserved.
+// Two datatypes with the same variant name and arity in the same TU produce a
+// redefinition of DTProxyVN — use the qualified DN::VN() form in that case.
+// The variant names Some / None / Ok / Err are reserved by the library.
 
 #define _DT_PROXY_NAME(VN) _DT_CAT(DTProxy,VN)
 
@@ -393,21 +384,20 @@ _DT_FOR_EACH_WITH(_DT_GEN_FREE, Name, __VA_ARGS__)
 // §4  match — pattern matching (statement and expression form)
 //=============================================================================
 //
-// Two distinct syntaxes:
-//
 // Statement form — match(val) { of(…){} … }
-//   For side-effecting arms.  val must be an lvalue.
+//   Side-effecting arms; val must be an lvalue.
 //   goto/break to outer loops work freely (no lambda boundary).
+//
 //   match(shape) {
 //       of(Circle, r)    { printf("r=%d\n", r); }
 //       of(Rect, w, h)   { printf("%dx%d\n", w, h); }
 //       of(Point)        { puts("point"); }
-//       otherwise        { puts("?"); }         // optional catch-all
+//       otherwise        { puts("?"); }   // optional catch-all
 //   }
 //
 // Expression form — match(val, { of(…){ return …; } … })
-//   Arms must return a consistent type; the whole expression evaluates to it.
-//   val may be an rvalue (lifetime is extended inside the IIFE).
+//   Arms must return a consistent type.  val may be an rvalue.
+//
 //   auto area = match(shape, {
 //       of(Circle, r)  { return r * r; }
 //       of(Rect, w, h) { return w * h; }
@@ -415,20 +405,14 @@ _DT_FOR_EACH_WITH(_DT_GEN_FREE, Name, __VA_ARGS__)
 //   });
 //
 // Bindings in of():
-//   - fields arrive as T& references — use the name directly, no dereference.
+//   - fields arrive as T& references — use the name directly.
 //   - use `_` to ignore a field:  of(Rect, _, h) { use(h); }
-//   - pointer fields (e.g. BTree*) bind as T*& ; dereference once to get T.
 //
-// where(cond) — match guard:
+// where(cond) — guard between of(…) and { body }
 //   of(Circle, r) where(r > 10) { … }
-//   If cond is false the arm body is skipped; control jumps to otherwise.
-//   Requires otherwise to be present.  Nested statement-form matches
-//   that both use where+otherwise share the label _match_otherwise — nesting
-//   them in the same function scope is not supported; use expression-form
-//   (IIFE) for the inner match instead.
+//   If cond is false, control falls through to otherwise (which must be present).
 //
-// otherwise — catch-all default case (must be last).
-//   Also acts as the landing pad for where-guard failures.
+// otherwise — default catch-all (must be last).
 
 // Detect the `_` ignore-binding sentinel
 #define _DT_IS_IGN(x)   _DT_CHECK(_DT_CAT(_DT_IS_IGN_, x))
@@ -456,42 +440,31 @@ _DT_FOR_EACH_WITH(_DT_GEN_FREE, Name, __VA_ARGS__)
 #define _DT_BINDS_D(N, ...)     _DT_BINDS_D_I(N, __VA_ARGS__)
 #define _DT_BINDS_D_I(N, ...)   _DT_BINDS_##N(__VA_ARGS__)
 
-// of(Variant, bindings…)
-//
-// Expands to:
+// of(Variant, bindings…) — one match arm
 //   break; case Type::Variant_tag:
-//   if ([[maybe_unused]] auto& _mdata = _match_ptr->data.Variant; true)
+//   if (auto& _mdata = _match_ptr->data.Variant; true)
 //   [if (auto& a = _mdata._0; true) …]
-//
-// The user's { … } (or where(cond) { … }) is the body of the innermost if.
 #define of(Variant, ...) \
     break; \
     case std::remove_pointer_t<decltype(_match_ptr)>::Variant##_tag: \
     if ([[maybe_unused]] auto& _mdata = _match_ptr->data.Variant; true) \
     _DT_BINDS_D(_DT_VACOUNT0(__VA_ARGS__) __VA_OPT__(,) __VA_ARGS__)
 
-// where(cond) — guard between of(…) and { body }
-// If cond is false, jumps to _match_otherwise (defined by otherwise).
-// When cond is true, executes the following { body }.
-// Note: only one arm per variant; multiple guards on the same variant
-// aren't possible in a switch — use if-else inside the arm instead.
+// where(cond) — guard between of(…) and { body }; jumps to otherwise if false
 #define where(cond)  if (!(cond)) { goto _match_otherwise; } else
 
-// otherwise — default catch-all arm (must be last).
-// Defines _match_otherwise as a goto target for where-guard failures.
+// otherwise — catch-all (must be last); also the goto target for where failures
 #define otherwise  break; _match_otherwise: default:
 
 // Detect whether match() has a second argument (expression form).
 #define _DT_MATCH_HAS(...) __VA_OPT__(1)
 
 // Statement form — for-once loop scopes _match_ptr into the following { }.
-// val must be an lvalue.  goto/break to enclosing loops work here.
 #define _DT_MATCH_(val) \
     for (auto* _match_ptr = &(val); _match_ptr; _match_ptr = nullptr) \
     switch (_match_ptr->tag)
 
-// Expression form — IIFE lambda.  auto&& accepts rvalues and extends their
-// lifetime.  Return type deduced from arm return expressions.
+// Expression form — IIFE; auto&& extends rvalue lifetime.
 #define _DT_MATCH_1(val, body) \
     ([&]() { \
         auto&& _match_val = (val); \
@@ -508,261 +481,173 @@ _DT_FOR_EACH_WITH(_DT_GEN_FREE, Name, __VA_ARGS__)
 //=============================================================================
 
 // matches(val, Variant) → bool
-//   True if val currently holds the given variant.
 #define matches(val, Variant) \
     ((val).tag == std::remove_reference_t<decltype(val)>::Variant##_tag)
 
 // if_let(val, Variant, bindings…) stmt
-//   Executes stmt only when val holds Variant, with T& bindings in scope.
-//
-//   if_let(opt, Some, v) { printf("%d\n", v); }
-//   if_let(res, Err, e)  { printf("err: %s\n", e); }
-//   if_let(s,   Point)   { puts("it's a point"); }
+//   Runs stmt only when val holds Variant, with T& bindings in scope.
 #define if_let(val, Variant, ...) \
     if (matches(val, Variant)) \
     if ([[maybe_unused]] auto& _mdata = (val).data.Variant; true) \
     _DT_BINDS_D(_DT_VACOUNT0(__VA_ARGS__) __VA_OPT__(,) __VA_ARGS__)
 
 //=============================================================================
-// §7  Option<T>
+// §6  Option<T>
 //=============================================================================
 //
-// Follows the exact datatype layout — all match macros work on it.
+//   Some(42)   →  DTProxySome<int>  (converts to any Option<int> from context)
+//   None()     →  DTProxyNone       (converts to any Option<T> from context)
 //
-// Constructors (free, no template args):
-//   Some(42)   →  Option<int>
-//   None()     →  Option<T>   (T deduced from context)
-//
-// Methods:  is_some(), is_none(), unwrap(), unwrap_or(def),
-//           map(fn), and_then(fn), or_else(fn), filter(pred)
+//   Methods: is_some(), is_none(), unwrap(), unwrap_or(def),
+//            map(fn), and_then(fn), or_else(fn), filter(pred)
 
-// Forward declarations so Result's and_then/or_else can specialise on them
-template <typename T, typename E> struct Result;
-template <typename V> struct _OkProxy;
-template <typename E> struct _ErrProxy;
-
-// Trait: given the return type of an and_then fn and the known E, find Ret
-template <typename R, typename KT, typename KE> struct _res_and_then { using type = R; };
-template <typename V, typename KT, typename KE>
-struct _res_and_then<_OkProxy<V>, KT, KE>  { using type = Result<V,  KE>; };
-template <typename F, typename KT, typename KE>
-struct _res_and_then<_ErrProxy<F>, KT, KE> { using type = Result<KT, F>;  };
-
-// Trait: given the return type of an or_else fn and the known T & E, find Ret
-template <typename R, typename KT, typename KE> struct _res_or_else { using type = R; };
-template <typename V, typename KT, typename KE>
-struct _res_or_else<_OkProxy<V>,  KT, KE> { using type = Result<V,  KE>; };
-template <typename F, typename KT, typename KE>
-struct _res_or_else<_ErrProxy<F>, KT, KE> { using type = Result<KT, F>;  };
+template <typename T> struct Option;
 
 template <typename T>
-struct Option {
-    enum Tag { Some_tag, None_tag } tag;
-    struct _Some { static constexpr std::size_t _field_count = 1; T _0; };
-    struct _None { static constexpr std::size_t _field_count = 0; };
-    union { char dummy; _Some Some; _None None; } data;
-    static constexpr std::size_t _variant_count = 2;
+struct _OptionMethods {
+    const Option<T>& _self() const noexcept { return *static_cast<const Option<T>*>(this); }
+    Option<T>&       _self()       noexcept { return *static_cast<      Option<T>*>(this); }
 
-    static Option Some(T v) noexcept {
-        Option r = {}; r.tag = Some_tag; r.data.Some._0 = v; return r;
-    }
-    static Option None() noexcept {
-        Option r = {}; r.tag = None_tag; return r;
-    }
+    [[nodiscard]] bool is_some() const noexcept { return _self().tag == Option<T>::Some_tag; }
+    [[nodiscard]] bool is_none() const noexcept { return _self().tag == Option<T>::None_tag; }
 
-    [[nodiscard]] bool is_some() const noexcept { return tag == Some_tag; }
-    [[nodiscard]] bool is_none() const noexcept { return tag == None_tag; }
-
-    T& unwrap() noexcept {
+    [[nodiscard]] T& unwrap() noexcept {
         assert(is_some() && "Option::unwrap() on None");
-        return data.Some._0;
+        return _self().data.Some._0;
     }
-    const T& unwrap() const noexcept {
+    [[nodiscard]] const T& unwrap() const noexcept {
         assert(is_some() && "Option::unwrap() on None");
-        return data.Some._0;
+        return _self().data.Some._0;
     }
-
-    T unwrap_or(T def) const noexcept {
-        return is_some() ? data.Some._0 : def;
+    [[nodiscard]] T unwrap_or(T def) const noexcept {
+        return is_some() ? _self().data.Some._0 : def;
     }
-
     template <typename Fn>
     [[nodiscard]] auto map(Fn&& fn) const
-        -> Option<std::__remove_cvref_t<std::invoke_result_t<Fn, const T&>>>
+        -> Option<std::decay_t<std::invoke_result_t<Fn, const T&>>>
     {
-        using U = std::__remove_cvref_t<std::invoke_result_t<Fn, const T&>>;
+        using U = std::decay_t<std::invoke_result_t<Fn, const T&>>;
         if (is_some())
-            return Option<U>::Some(std::invoke(std::forward<Fn>(fn), data.Some._0));
+            return Option<U>::Some(std::invoke(std::forward<Fn>(fn), _self().data.Some._0));
         return Option<U>::None();
     }
-
     template <typename Fn>
     [[nodiscard]] auto and_then(Fn&& fn) const
         -> std::invoke_result_t<Fn, const T&>
     {
-        if (is_some()) return std::invoke(std::forward<Fn>(fn), data.Some._0);
+        if (is_some()) return std::invoke(std::forward<Fn>(fn), _self().data.Some._0);
         return std::decay_t<std::invoke_result_t<Fn, const T&>>::None();
     }
-
     template <typename Fn>
-    [[nodiscard]] Option or_else(Fn&& fn) const {
+    [[nodiscard]] Option<T> or_else(Fn&& fn) const {
         if (is_none()) return std::invoke(std::forward<Fn>(fn));
-        return *this;
+        return _self();
     }
-
     template <typename Pred>
-    [[nodiscard]] Option filter(Pred&& pred) const {
-        if (is_some() && std::invoke(std::forward<Pred>(pred), data.Some._0))
-            return *this;
-        return None();
+    [[nodiscard]] Option<T> filter(Pred&& pred) const {
+        if (is_some() && std::invoke(std::forward<Pred>(pred), _self().data.Some._0))
+            return _self();
+        return Option<T>::None();
     }
 };
 
+template <typename T>
+datatype(Option, _OptionMethods<T>,
+    (Some, T),
+    (None)
+);
+
 //=============================================================================
-// §8  Result<T, E>
+// §7  Result<T, E>
 //=============================================================================
 //
-// Follows the exact datatype layout — all match macros work on it.
+//   Ok(42)       →  DTProxyOk<int>   (converts to Result<int,E> from context)
+//   Err("oops")  →  DTProxyErr<…>    (converts to Result<T,const char*> from context)
 //
-// Constructors (free, no template args):
-//   Ok(42)       →  Result<int, E>         (T deduced, E from context)
-//   Err("oops")  →  Result<T, const char*> (E deduced, T from context)
-//   Result<int, const char*>::Ok / ::Err still available for disambiguation
-//
-// Methods:  is_ok(), is_err(), unwrap(), unwrap_err(), unwrap_or(def),
-//           map(fn), map_err(fn), and_then(fn), or_else(fn)
+//   Methods: is_ok(), is_err(), unwrap(), unwrap_err(), unwrap_or(def),
+//            map(fn), map_err(fn), and_then(fn), or_else(fn)
+
+template <typename T, typename E> struct Result;
+
+template <typename _A0> struct DTProxyOk;
+template <typename _A0> struct DTProxyErr;
+
+template <typename R, typename KT, typename KE> struct _res_and_then { using type = R; };
+template <typename V, typename KT, typename KE>
+struct _res_and_then<DTProxyOk<V>,  KT, KE> { using type = Result<V,  KE>; };
+template <typename F, typename KT, typename KE>
+struct _res_and_then<DTProxyErr<F>, KT, KE> { using type = Result<KT, F>;  };
+
+template <typename R, typename KT, typename KE> struct _res_or_else { using type = R; };
+template <typename V, typename KT, typename KE>
+struct _res_or_else<DTProxyOk<V>,  KT, KE> { using type = Result<V,  KE>; };
+template <typename F, typename KT, typename KE>
+struct _res_or_else<DTProxyErr<F>, KT, KE> { using type = Result<KT, F>;  };
 
 template <typename T, typename E>
-struct Result {
-    enum Tag { Ok_tag, Err_tag } tag;
-    struct _Ok  { static constexpr std::size_t _field_count = 1; T _0; };
-    struct _Err { static constexpr std::size_t _field_count = 1; E _0; };
-    union { char dummy; _Ok Ok; _Err Err; } data;
-    static constexpr std::size_t _variant_count = 2;
+struct _ResultMethods {
+    const Result<T,E>& _self() const noexcept { return *static_cast<const Result<T,E>*>(this); }
+    Result<T,E>&       _self()       noexcept { return *static_cast<      Result<T,E>*>(this); }
 
-    static Result Ok(T v) noexcept {
-        Result r = {}; r.tag = Ok_tag; r.data.Ok._0 = v; return r;
-    }
-    static Result Err(E e) noexcept {
-        Result r = {}; r.tag = Err_tag; r.data.Err._0 = e; return r;
-    }
+    [[nodiscard]] bool is_ok()  const noexcept { return _self().tag == Result<T,E>::Ok_tag;  }
+    [[nodiscard]] bool is_err() const noexcept { return _self().tag == Result<T,E>::Err_tag; }
 
-    [[nodiscard]] bool is_ok()  const noexcept { return tag == Ok_tag;  }
-    [[nodiscard]] bool is_err() const noexcept { return tag == Err_tag; }
-
-    T& unwrap() noexcept {
+    [[nodiscard]] T& unwrap() noexcept {
         assert(is_ok() && "Result::unwrap() on Err");
-        return data.Ok._0;
+        return _self().data.Ok._0;
     }
-    const T& unwrap() const noexcept {
+    [[nodiscard]] const T& unwrap() const noexcept {
         assert(is_ok() && "Result::unwrap() on Err");
-        return data.Ok._0;
+        return _self().data.Ok._0;
     }
-    T unwrap_or(T def) const noexcept { return is_ok() ? data.Ok._0 : def; }
-
-    E& unwrap_err() noexcept {
+    [[nodiscard]] T unwrap_or(T def) const noexcept { return is_ok() ? _self().data.Ok._0 : def; }
+    [[nodiscard]] E& unwrap_err() noexcept {
         assert(is_err() && "Result::unwrap_err() on Ok");
-        return data.Err._0;
+        return _self().data.Err._0;
     }
-    const E& unwrap_err() const noexcept {
+    [[nodiscard]] const E& unwrap_err() const noexcept {
         assert(is_err() && "Result::unwrap_err() on Ok");
-        return data.Err._0;
+        return _self().data.Err._0;
     }
-
     template <typename Fn>
     [[nodiscard]] auto map(Fn&& fn) const
-        -> Result<std::__remove_cvref_t<std::invoke_result_t<Fn, const T&>>, E>
+        -> Result<std::decay_t<std::invoke_result_t<Fn, const T&>>, E>
     {
-        using U = std::__remove_cvref_t<std::invoke_result_t<Fn, const T&>>;
+        using U = std::decay_t<std::invoke_result_t<Fn, const T&>>;
         if (is_ok())
-            return Result<U,E>::Ok(std::invoke(std::forward<Fn>(fn), data.Ok._0));
-        return Result<U,E>::Err(data.Err._0);
+            return Result<U,E>::Ok(std::invoke(std::forward<Fn>(fn), _self().data.Ok._0));
+        return Result<U,E>::Err(_self().data.Err._0);
     }
-
     template <typename Fn>
     [[nodiscard]] auto map_err(Fn&& fn) const
-        -> Result<T, std::__remove_cvref_t<std::invoke_result_t<Fn, const E&>>>
+        -> Result<T, std::decay_t<std::invoke_result_t<Fn, const E&>>>
     {
-        using F = std::__remove_cvref_t<std::invoke_result_t<Fn, const E&>>;
+        using F = std::decay_t<std::invoke_result_t<Fn, const E&>>;
         if (is_err())
-            return Result<T,F>::Err(std::invoke(std::forward<Fn>(fn), data.Err._0));
-        return Result<T,F>::Ok(data.Ok._0);
+            return Result<T,F>::Err(std::invoke(std::forward<Fn>(fn), _self().data.Err._0));
+        return Result<T,F>::Ok(_self().data.Ok._0);
     }
-
     template <typename Fn>
     [[nodiscard]] auto and_then(Fn&& fn) const {
         using FnRet = std::decay_t<std::invoke_result_t<Fn, const T&>>;
         using Ret   = typename _res_and_then<FnRet, T, E>::type;
-        if (is_ok()) { Ret r = std::invoke(std::forward<Fn>(fn), data.Ok._0); return r; }
-        return Ret::Err(data.Err._0);
+        if (is_ok()) { Ret r = std::invoke(std::forward<Fn>(fn), _self().data.Ok._0); return r; }
+        return Ret::Err(_self().data.Err._0);
     }
-
     template <typename Fn>
     [[nodiscard]] auto or_else(Fn&& fn) const {
         using FnRet = std::decay_t<std::invoke_result_t<Fn, const E&>>;
         using Ret   = typename _res_or_else<FnRet, T, E>::type;
-        if (is_err()) { Ret r = std::invoke(std::forward<Fn>(fn), data.Err._0); return r; }
-        return Ret::Ok(data.Ok._0);
+        if (is_err()) { Ret r = std::invoke(std::forward<Fn>(fn), _self().data.Err._0); return r; }
+        return Ret::Ok(_self().data.Ok._0);
     }
 };
 
-//=============================================================================
-// §9  Free constructors — type-deducing, no template args required
-//=============================================================================
-//
-//   Some(42)        →  Option<int>            (T deduced from arg)
-//   None()          →  Option<T>              (T deduced from context)
-//   Ok(42)          →  Result<int, E>         (T deduced from arg, E from context)
-//   Err("oops")     →  Result<T, const char*> (E deduced from arg, T from context)
-//
-// All four work via implicit conversion from a lightweight proxy so the type
-// parameters that cannot be deduced from the argument are filled in by the
-// compiler from the surrounding context (return type, variable type, etc.).
-
-// ── Some ────────────────────────────────────────────────────────────────────
-
-template <typename V>
-[[nodiscard]] Option<std::decay_t<V>> Some(V&& v) noexcept {
-    return Option<std::decay_t<V>>::Some(std::forward<V>(v));
-}
-
-// ── None ────────────────────────────────────────────────────────────────────
-
-struct _NoneTag {
-    template <typename T>
-    [[nodiscard]] operator Option<T>() const noexcept { return Option<T>::None(); }
-};
-[[nodiscard]] inline _NoneTag None() noexcept { return {}; }
-
-// ── Ok ──────────────────────────────────────────────────────────────────────
-
-template <typename V>
-struct _OkProxy {
-    V val;
-    template <typename T, typename E>
-    [[nodiscard]] operator Result<T, E>() const noexcept {
-        return Result<T, E>::Ok(static_cast<T>(val));
-    }
-};
-template <typename V>
-[[nodiscard]] _OkProxy<std::decay_t<V>> Ok(V&& v) noexcept {
-    return { std::forward<V>(v) };
-}
-
-// ── Err ─────────────────────────────────────────────────────────────────────
-
-template <typename E>
-struct _ErrProxy {
-    E val;
-    template <typename T, typename F>
-    [[nodiscard]] operator Result<T, F>() const noexcept {
-        return Result<T, F>::Err(static_cast<F>(val));
-    }
-};
-template <typename E>
-[[nodiscard]] _ErrProxy<std::decay_t<E>> Err(E&& e) noexcept {
-    return { std::forward<E>(e) };
-}
+template <typename T, typename E>
+datatype(Result, _ResultMethods<T, E>,
+    (Ok, T),
+    (Err, E)
+);
 
 //=============================================================================
 

@@ -55,7 +55,8 @@ void option_demo() {
 
     // and_then (flatMap)
     auto s3 = s.and_then([](int v) -> Option<int> {
-        return (v > 10) ? Some(v - 10) : None();
+        if (v > 10) return Some(v - 10);
+        return None();
     });
     printf("and_then: %d\n", s3.unwrap());   // 32
 
@@ -66,7 +67,8 @@ void option_demo() {
     // filter
     auto filtered = s.filter(is_positive);
     printf("filter pos: %d\n", filtered.unwrap());   // 42
-    auto filtered2 = Some(-5).filter(is_positive);
+    Option<int> neg = Some(-5);
+    auto filtered2 = neg.filter(is_positive);
     printf("filter neg is_none: %d\n", filtered2.is_none());  // 1
 
     // unwrap_or

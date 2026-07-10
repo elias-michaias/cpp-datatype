@@ -2,9 +2,9 @@
 
 ### Algebraic data types and pattern matching for C++
 
-Define sum types with `datatype`, then match on them with `match`. Supports templates, recursion, and a lot more. 
+Define sum types with `datatype`, then match on them with `match`. Supports templates, recursion, and a lot more. Inspired by [hirrolot/Datatype99](https://github.com/hirrolot/Datatype99). 
 
-*Single header. No heap allocation. All tests pass with `clang` (not `clang++`; no C++ runtime features needed). Inspired by [hirrolot/Datatype99](https://github.com/hirrolot/Datatype99).*
+*Single header. No heap allocation. All tests pass with `clang` (not `clang++`; no C++ runtime features needed).*
 
 <img src="./datatype.png" alt="cpp-datatype code" />
 
