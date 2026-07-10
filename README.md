@@ -269,7 +269,7 @@ bash test.sh
 
 ## Notes
 
-- **Compiler:** `clang -std=c++17` (uses `__VA_OPT__`, C++17 if-with-initializer, C++20 `constexpr`)
+- **Compiler:** `clang -std=c++20`
 - **Statement form** requires an lvalue; `goto`/`break` work to outer loops.
 - **Expression form** accepts rvalues (IIFE `auto&&`); all arms must `return`.
 - **`where` + `otherwise`:** must appear together; `where` uses a fixed label `_match_otherwise`. Nested statement-form matches with `where`+`otherwise` in the same function collide — use expression-form for the inner match.
