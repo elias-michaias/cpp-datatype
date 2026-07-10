@@ -110,7 +110,7 @@ datatype(Either,
 
 You can construct variants either with fully-qualified constructors or free constructors. Free constructors are able to omit type information by generating a proxy type that implicitly converts only to a fully-typed version of its own datatype. The proxy type becomes fully-typed from the surrounding context. This is useful in certain situations, like function returns:
 
-```
+```cpp
 template<typename T>
 datatype(Maybe,
     (Just, T),
@@ -139,7 +139,7 @@ struct Shape { int color = 0; };
 
 datatype(Obj3D, Shape,
     (Sphere, int),
-    (Square, int)
+    (Cube, int)
 );
 
 auto s = Obj3D::Sphere(5);
