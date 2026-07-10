@@ -2,7 +2,7 @@
 #ifndef CPP_MATCH_HPP
 #define CPP_MATCH_HPP
 
-#include <cassert>
+#include <assert.h>
 #include <functional>
 #include <type_traits>
 #include <utility>
